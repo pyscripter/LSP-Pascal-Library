@@ -220,6 +220,22 @@ begin
     SafeCloseHandle(PExtOverlapped(lpOverlapped).PipeHandle^);
 end;
 
+// Completion routine for WriteFileEx
+procedure WriteCompletionRoutine(dwErrorCode: DWORD; dwNumberOfBytesTransfered: DWORD;
+  lpOverlapped: POverlapped); stdcall;
+var
+  ExtOverlapped: PExtOverlapped;
+begin
+  ExtOverlapped := PExtOverlapped(lpOverlapped);
+
+  // Check for errors or pipe closure
+  if dwErrorCode <> 0 then
+    SafeCloseHandle(PExtOverlapped(lpOverlapped).PipeHandle^);
+
+  // Cleanup: Free the memory allocated for the structure and the buffer
+  Dispose(ExtOverlapped);
+end;
+
 procedure TLSPExecuteServerThread.AddEnvironmentVars(const values: string);
 begin
   if values = '' then Exit;
@@ -237,11 +253,10 @@ var
   ReadHandle, WriteHandle: THandle;
   ErrorReadHandle, ErrorWriteHandle: THandle;
   StdInReadPipe, StdInWriteTmpPipe, StdInWritePipe: THandle;
-  dBytesWrite: DWORD;
   EnvironmentData: Pointer;
   ExtOverlapped, ExtOverlappedError: TExtOverlapped;
+  ExtWriteOverlapped: PExtOverlapped;
   PCurrentDir: PChar;
-  LWriteBytes: TBytes;
 begin
   FExitcode := 0;
 
@@ -253,8 +268,8 @@ begin
   ReadHandle := 0;
   WriteHandle := 0;
   try
-  // Create pipe for writing
-    if not SafeCreatePipe(StdInReadPipe, StdInWriteTmpPipe, @SecurityAttributes, 0) then
+    // Create async pipe for writing
+    if not CreateAsyncPipePair(StdInReadPipe, StdInWriteTmpPipe, @SecurityAttributes, 0, False) then
       RaiseLastOSError;
 
     try
@@ -267,11 +282,11 @@ begin
     end;
 
     // Create async pipe for reading stdout
-    if not CreateAsyncPipe(ReadHandle, WriteHandle, @SecurityAttributes, BUFFER_SIZE) then
+    if not CreateAsyncPipePair(ReadHandle, WriteHandle, @SecurityAttributes, BUFFER_SIZE) then
       RaiseLastOSError;
 
     // Create async pipe for reading stderror
-    if not CreateAsyncPipe(ErrorReadHandle, ErrorWriteHandle, @SecurityAttributes, BUFFER_SIZE) then
+    if not CreateAsyncPipePair(ErrorReadHandle, ErrorWriteHandle, @SecurityAttributes, BUFFER_SIZE) then
       RaiseLastOSError;
   except
     SafeCloseHandle(StdInReadPipe);
@@ -356,28 +371,35 @@ begin
     repeat
       // Alertable wait so the that read completion interrupts the wait
       case WaitForSingleObjectEx(FWriteEvent.Handle, INFINITE, True) of
-        WAIT_OBJECT_0:
+        WAIT_OBJECT_0:  // Write pending
+          if not Terminated and (Length(FWriteBytes) > 0) and
+            (StdInWritePipe <> 0) then
           begin
-            // Write data to the server
+            // Allocate overlapped
+            New(ExtWriteOverlapped);
+            ExtWriteOverlapped.PipeHandle := @StdInWritePipe;
+            ZeroMemory(@ExtOverlappedError.Overlapped, SizeOf(TOverlapped));
+
+            // Store the data for writing in ExtWriteOverlapped
             FWriteLock.Enter;
             try
-              LWriteBytes := FWriteBytes;
+              ExtWriteOverlapped.Buffer := FWriteBytes;
               SetLength(FWriteBytes, 0);
             finally
               FWriteLock.Leave;
             end;
-            if not Terminated and (Length(LWriteBytes) > 0) then
+
+            // Write data to the server asynchronously
+            if not WriteFileEx(StdInWritePipe, @ExtWriteOverlapped.Buffer[0],
+              Length(ExtWriteOverlapped.Buffer), ExtWriteOverlapped.Overlapped,
+              @WriteCompletionRoutine) then
             begin
-              if not WriteFile(StdInWritePipe, LWriteBytes[0],
-                Length(LWriteBytes), dBytesWrite, nil)
-              then
-              begin
-                SafeCloseHandle(StdInWritePipe);
-                RaiseLastOSError;
-              end;
+              Dispose(ExtWriteOverlapped);
+              SafeCloseHandle(StdInWritePipe);
+              RaiseLastOSError;
             end;
           end;
-          WAIT_IO_COMPLETION: Continue;
+        WAIT_IO_COMPLETION: Continue;
         else
           RaiseLastOSError;
       end;
