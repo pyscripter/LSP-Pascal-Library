@@ -378,7 +378,7 @@ begin
             // Allocate overlapped
             New(ExtWriteOverlapped);
             ExtWriteOverlapped.PipeHandle := @StdInWritePipe;
-            ZeroMemory(@ExtOverlappedError.Overlapped, SizeOf(TOverlapped));
+            ZeroMemory(@ExtWriteOverlapped.Overlapped, SizeOf(TOverlapped));
 
             // Store the data for writing in ExtWriteOverlapped
             FWriteLock.Enter;
