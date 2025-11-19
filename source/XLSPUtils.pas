@@ -171,8 +171,9 @@ function SafeDuplicateHandle(hSourceProcessHandle, hSourceHandle,
   bInheritHandle: BOOL; dwOptions: DWORD): BOOL;
 
 // Helper routine to create asynchronous pipes.  From Jcl JclSysUtils
-function CreateAsyncPipe(var hReadPipe, hWritePipe: THandle;
-  lpPipeAttributes: PSecurityAttributes; nSize: DWORD): BOOL;
+function CreateAsyncPipePair(var hReadPipe, hWritePipe: THandle;
+  lpPipeAttributes: PSecurityAttributes; nSize: DWORD;
+  IsForReading: Boolean = True): BOOL;
 
 {$ENDREGION 'Utility functions'}
 
@@ -361,10 +362,11 @@ end;
 var
   AsyncPipeCounter: Integer = 0;
 
-function CreateAsyncPipe(var hReadPipe, hWritePipe: THandle;
-  lpPipeAttributes: PSecurityAttributes; nSize: DWORD): BOOL;
+function CreateAsyncPipePair(var hReadPipe, hWritePipe: THandle;
+  lpPipeAttributes: PSecurityAttributes; nSize: DWORD;
+  IsForReading: Boolean = True): BOOL;
 var
-  Error: DWORD;
+  OpenMode, Flags, Error: DWORD;
   PipeReadHandle, PipeWriteHandle: THandle;
   PipeName: string;
 begin
@@ -378,16 +380,22 @@ begin
 
   // Unique name
   AtomicIncrement(AsyncPipeCounter);
-  PipeName := Format('\\.\Pipe\AsyncAnonPipe.%.8x.%.8x.%.8x',
+  PipeName := Format('\\.\Pipe\AsyncPipe.%.8x.%.8x.%.8x',
     [GetCurrentProcessId, GetCurrentThreadId, AsyncPipeCounter]);
 
-  PipeReadHandle := CreateNamedPipe(PChar(PipeName), PIPE_ACCESS_INBOUND or FILE_FLAG_OVERLAPPED,
+  OpenMode := PIPE_ACCESS_INBOUND;
+  if IsForReading then
+    OpenMode := OpenMode or FILE_FLAG_OVERLAPPED;
+  PipeReadHandle := CreateNamedPipe(PChar(PipeName), OpenMode,
       PIPE_TYPE_BYTE or PIPE_WAIT, 1, nSize, nSize, 120 * 1000, lpPipeAttributes);
   if PipeReadHandle = INVALID_HANDLE_VALUE then
     Exit;
 
-  PipeWriteHandle := CreateFile(PChar(PipeName), GENERIC_WRITE, 0, lpPipeAttributes, OPEN_EXISTING,
-      FILE_ATTRIBUTE_NORMAL {or FILE_FLAG_OVERLAPPED}, 0);
+  Flags := FILE_ATTRIBUTE_NORMAL;
+  if not IsForReading then
+    Flags := Flags or FILE_FLAG_OVERLAPPED;
+  PipeWriteHandle := CreateFile(PChar(PipeName), GENERIC_WRITE, 0,
+    lpPipeAttributes, OPEN_EXISTING, Flags, 0);
   if PipeWriteHandle = INVALID_HANDLE_VALUE then
   begin
     Error := GetLastError;
