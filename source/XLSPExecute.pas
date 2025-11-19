@@ -268,7 +268,7 @@ begin
   ReadHandle := 0;
   WriteHandle := 0;
   try
-    // Create async pipe for writing
+    // Create async pipes for writing
     if not CreateAsyncPipePair(StdInReadPipe, StdInWriteTmpPipe, @SecurityAttributes, 0, False) then
       RaiseLastOSError;
 
@@ -281,11 +281,11 @@ begin
       SafeCloseHandle(StdInWriteTmpPipe);
     end;
 
-    // Create async pipe for reading stdout
+    // Create async pipes for reading stdout
     if not CreateAsyncPipePair(ReadHandle, WriteHandle, @SecurityAttributes, BUFFER_SIZE) then
       RaiseLastOSError;
 
-    // Create async pipe for reading stderror
+    // Create async pipes for reading stderror
     if not CreateAsyncPipePair(ErrorReadHandle, ErrorWriteHandle, @SecurityAttributes, BUFFER_SIZE) then
       RaiseLastOSError;
   except
@@ -400,8 +400,8 @@ begin
             end;
           end;
         WAIT_IO_COMPLETION: Continue;
-        else
-          RaiseLastOSError;
+      else
+        RaiseLastOSError;
       end;
     until (ErrorReadHandle = 0) and (ReadHandle = 0);
 
